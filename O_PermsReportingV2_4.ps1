@@ -1,4 +1,4 @@
-# Set the root folder path and CSV output file path
+# Set & reset variables
 $script:inputdepth = $null
 $inputDepth = $null
 $rootFolder = "O:\Safety - Space and Defence Work"
