@@ -5,8 +5,6 @@ $rootFolder = "O:\Safety - Space and Defence Work"
 $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
 $csvFile = "c:\temp\NTFSPermissionsO_$timestamp.CSV"
 $errorReportFile = "c:\temp\NTFSPermissionsO_Errors_$timestamp.CSV"
-$global:ErrorBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-$global:ResultsBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
 # Ensure PowerShell 7 is installed - Required for parallel processing
 function Ensure-PowerShell7 {
@@ -90,7 +88,6 @@ function Get-NTFSPermissions {
             }
             #New-Object -TypeName PSObject -Property $properties | Export-Csv -Path $csvFile -Append -NoTypeInformation
             $resultObj = New-Object -TypeName PSObject -Property $properties
-            $global:ResultsBag.Add($resultObj)
         } 
     } catch { # were here if there was an error in the try section
         # Lets check if the error is due to a long path
