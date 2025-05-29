@@ -2,13 +2,13 @@
 $script:inputdepth = $null
 $inputDepth = $null
 $rootFolder = "O:\Safety - Space and Defence Work"
-# Generate timestamp for unique file names
 $timestamp = (Get-Date -Format 'yyyyMMdd_HHmmss')
 $csvFile = "c:\temp\NTFSPermissionsO_$timestamp.CSV"
 $errorReportFile = "c:\temp\NTFSPermissionsO_Errors_$timestamp.CSV"
 $global:ErrorBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 $global:ResultsBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
+# Ensure PowerShell 7 is installed - Required for parallel processing
 function Ensure-PowerShell7 {
 
     [CmdletBinding()]
@@ -38,16 +38,13 @@ function Ensure-PowerShell7 {
         }
     }
 }
-
-# Example usage:
-# Ensure-PowerShell7
+Ensure-PowerShell7
 
 # helper function to map a temporary drive for long paths
 function Map-TempDriveForLongPath {
     param (
         [string]$LongPath
     )
-    "Map-TempDriveForLongPath" #debug
     $parts = $LongPath -split '\\'
     $currentPath = $parts[0] + '\\'
     $driveLetter = ([char[]](67..90) | Where-Object { -not (Get-PSDrive -Name $_ -ErrorAction SilentlyContinue) })[0] + ':'
@@ -57,18 +54,16 @@ function Map-TempDriveForLongPath {
             Get-Item -Path $testPath -ErrorAction Stop | Out-Null
             $currentPath = $testPath
         } catch {
-            "Map-TempDriveForLongPath - Catch" #debug
             break
         }
     }
-    "Map-TempDriveForLongPath - New-PSDrive" #debug
     New-PSDrive -Name $driveLetter.TrimEnd(':') -PSProvider FileSystem -Root $currentPath -ErrorAction SilentlyContinue | Out-Null
     $remainingPath = ($LongPath -replace [regex]::Escape($currentPath), '').TrimStart('\')
     $mappedPath = Join-Path $driveLetter $remainingPath
     return @{ Drive = $driveLetter; Path = $mappedPath }
 }
 
-# Define the function to get the NTFS permissions for a folder and its subfolders recursively
+# Function to get the NTFS permissions for a folder and its subfolders recursively
 function Get-NTFSPermissions {
     param (
         [string]$path,
@@ -79,19 +74,12 @@ function Get-NTFSPermissions {
         $script:inputDepth = $depth
     }
     $folderDepth = $depth - $script:inputDepth
-    "Get-NTFSPermissions" #debug
-    $path #debug
-    $depth #debug
     try { # Adding this to try catch for error handling of long file names
         $folder = Get-Item -Path $path -ErrorAction Stop
-        $folder #debug
         $acl = Get-Acl -Path $path -ErrorAction Stop
-        $acl #debug
         $rules = $acl.Access | Select-Object -Property IdentityReference, FileSystemRights, AccessControlType, IsInherited
-        $rules #debug
 
         foreach ($rule in $rules) {
-            "Get-NTFSPermissions - foreach" #debug
             $properties = @{
                 "Folder" = $folder.FullName
                 "Depth" = $folderDepth
@@ -100,33 +88,23 @@ function Get-NTFSPermissions {
                 "AccessControlType" = $rule.AccessControlType
                 "IsInherited" = $rule.IsInherited
             }
-            $properties #debug
-            "get-ntfspermission - properties list in foreach" #debug
             #New-Object -TypeName PSObject -Property $properties | Export-Csv -Path $csvFile -Append -NoTypeInformation
             $resultObj = New-Object -TypeName PSObject -Property $properties
             $global:ResultsBag.Add($resultObj)
         } 
     } catch { # were here if there was an error in the try section
         # Lets check if the error is due to a long path
-        "Get-NTFSPermissions - Catch" #debug
-        $_.Exception.Message #debug
         if ($_.Exception.Message -match "The specified path, file name, or both are too long") {
             $mapResult = Map-TempDriveForLongPath -LongPath $path
-            $mapresults #debug
             if ($mapResult) {
                 try {
-                    "MapResult Try" #debug
                     Get-NTFSPermissions -path $mapResult.Path -depth $depth
                 } catch {
-                    "get-ntfspermissions - catch" #debug
                 } finally {
-                    "MapResult Finally" #debug
                     Remove-PSDrive -Name $mapResult.Drive.TrimEnd(':') -Force -ErrorAction SilentlyContinue
                 }
             }
         } else {
-            "Get-NTFSPermissions - Catch - else" #debug
-            $_.Exception.Message #debug
             Write-Warning "Failed to process $($path): $($_.Exception.Message)"
             # Log the error to a separate CSV report
             $errorProperties = @{
@@ -136,7 +114,6 @@ function Get-NTFSPermissions {
                 "Time" = (Get-Date).ToString('s')
             }
             $errorObj = New-Object -TypeName PSObject -Property $errorProperties
-            $errorObj #debug
             if (-not (Test-Path $errorReportFile)) {
                 $errorObj | Export-Csv -Path $errorReportFile -NoTypeInformation
             } else {
@@ -146,13 +123,9 @@ function Get-NTFSPermissions {
     }
 
     # Multithreaded processing of subfolders for performance
-    "Get-NTFSPermissions - Multithreaded processing" #debug
     try {
-        "Get-NTFSPermissions - Multithreaded processing - try" #debug
         $subFolders = Get-ChildItem -Path $path -Directory -ErrorAction Stop
-        $subfolders #debug
     } catch {
-        
         Write-Warning "Failed to enumerate subfolders in $($path): $($_.Exception.Message)"
         # Log the error to a separate CSV report for subfolder enumeration errors
         $errorProperties = @{
@@ -172,12 +145,10 @@ function Get-NTFSPermissions {
 
     if ($subFolders.Count -gt 0) {
         $throttleLimit = 8 # Adjust based on your CPU/IO #############Set to one for testing/debugging
-        $subfolders |select-object 'fullname' #Debugging
-        $subfolders.count #debugging
         $Results = $subFolders | ForEach-Object -Parallel {
-            #$inputdepth = $using:inputdepth
-            #$errorReportFile = $Using:errorReportFile
-            #$throttleLimit = $using:throttleLimit
+            $inputdepth = $using:inputdepth
+            $errorReportFile = $Using:errorReportFile
+            $throttleLimit = $using:throttleLimit
             Import-Module Microsoft.PowerShell.Management
             Import-Module Microsoft.PowerShell.Utility
             function Get-NTFSPermissions {
@@ -202,7 +173,6 @@ function Get-NTFSPermissions {
                         }
                         #New-Object -TypeName PSObject -Property $properties | Export-Csv -Path $csvFile -Append -NoTypeInformation
                         $resultObj = New-Object -TypeName PSObject -Property $properties
-                        $resultObj # Outputting the result object
                     }
                 } catch {
                     if ($_.Exception.Message -match "The specified path, file name, or both are too long") {
@@ -246,21 +216,16 @@ function Get-NTFSPermissions {
                 }
             }
             Get-NTFSPermissions -path $_.FullName -depth ($depth + 1) -errorpath $ReportFile -verbose
-        }  #-ThrottleLimit $throttleLimit #-ArgumentList $($path), $($depth) -ArgumentList $global:ResultsBag
+        }  -ThrottleLimit $throttleLimit #-ArgumentList $($path), $($depth)
         if ($results) {
-            $results | Export-Csv -Path $csvFile -NoTypeInformation
-            Write-Host "parallel results exported to $csvFile" #Debug
-            $Results # debug
+            $results | Export-Csv -Path $csvFile -NoTypeInformation -Append
+            Write-Host "parallel results exported to $csvFile"
+            #$Results # debug
         }
-        #$Results | Export-csv -Path $csvFile -NoTypeInformation -Append
-        #Write-Host "Exported results to $csvFile"
+        $Results | Export-csv -Path $csvFile -NoTypeInformation -Append
+        Write-Host "Exported results to $csvFile"
     }
 }
 
 # Call the function for the root folder
 Get-NTFSPermissions -path $rootFolder -depth 30 -errorpath $errorReportFile -verbose
-
-
-
-
-#####Need to check if there are duplicated results int he ntfspermissions0_date.csv results file.
